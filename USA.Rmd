@@ -1,0 +1,336 @@
+---
+title: "project_b22geoko"
+author: "Georgios Kokolakis"
+date: '`r Sys.Date()`'
+output: pdf_document
+---
+
+Load data and Libraries
+```{r}
+library(forecast)
+library(tsutils)
+library(glmnet)
+library(zoo)
+library(thief)
+library(abind)
+library(MAPA)
+
+load("./dataTour.Rdata", verbose = TRUE)
+load("./IMFdata.RData", verbose = TRUE)
+```
+
+```{r}
+cz <- dataTour$`Czech republic`
+#remove year 2020 as instructed
+cz <- window(cz , end = c(year = 2019, quarter = 4))
+```
+Split Data into training testing and validation
+```{r}
+train <- window(cz , end = c(year = 2018, quarter = 4))
+test <- window(cz , start = c(year = 2019, quarter =1))
+```
+We have 5 target variables we will explore each one individually as different models can be a better fit for each one.
+
+```{r}
+country = "USA"
+target <- train[,country]
+cmav(target,outplot = 1)
+seasplot(target)
+pacf(target)
+```
+The cmav and seasonality plot shows that the ts is seasonal and trending and from the PACF we see that we have 3 significant lags (2,3,4).
+
+We begin with an ETS model, we will test different combinations on the validation set to get the model that performs the best. We use 6 quarters for training and 2 quarters for testing.
+```{r}
+# Using validation set
+y.ins <- head(target, 6 * 4)
+y.val <- tail(target, 2 * 4)
+h <- 4
+omax <- length(y.val) - h + 1
+
+models <- c("AAA", "MAA", "MAM", "MMM", "Naive", "CombMean", "CombMedian")
+damped <- rep(FALSE, length(models))
+err <- array(NA, c(omax, length(models)))
+frcs <- array(NA, c(h, length(models)))
+
+for (o in 1:omax) {
+  # Split training set
+  y.ins <- head(target, 6 * 4 - 1 + o)  # As o increases, so will the in-sample.
+  y.val <- tail(target, 2 * 4 - o + 1)  # As o increases, the validation will decrease.
+  
+  # Fit and forecast with all exponential smoothing models
+  for (m in 1:(length(models) - 3)) {
+    fitTemp <- ets(y.ins, model = models[m], damped = damped[m])
+    frcs[, m] <- forecast(fitTemp, h = h)$mean
+    err[o, m] <- mean(abs(y.val[1:h] - frcs[, m]) / y.val[1:h]) * 100
+  }
+  
+  # Forecast using the seasonal naive
+  frcs[, 5] <- tail(y.ins, frequency(y.ins))[1:h]
+  err[o, 5] <- mean(abs(y.val[1:h] - frcs[, 5]) / y.val[1:h]) * 100
+  
+  # Combinations
+  # The function apply allows us to use any function we want on a matrix
+  frcs[, 6] <- apply(frcs[, 1:5], 1, mean)
+  # take the mean across all columns (that is what the argument 1 says).
+  err[o, 6] <- mean(abs(y.val[1:h] - frcs[, 6]) / y.val[1:h]) * 100
+  
+  # And for the median:
+  frcs[, 7] <- apply(frcs[, 1:5], 1, median)
+  err[o, 7] <- mean(abs(y.val[1:h] - frcs[, 7]) / y.val[1:h]) * 100
+}
+
+# Find which one has the lowest error
+colnames(err) <- c("AAA", "MAA", "MAM", "MMM", "Naive", "CombMean", "CombMedian")
+errMean <- colMeans(err)
+which.min(errMean)
+boxplot(err)
+
+cat("Lowest Percentage Error:", errMean[which.min(errMean)], "%\n")
+cat("Model with Lowest Error:", colnames(err)[which.min(errMean)], "\n")
+
+```
+The results point towards ETS(MMM) with the lowest percentage error (~2.5%).
+Let us now make predictions with the model and check the results with a plot.
+
+```{r}
+#MMM has the best performance for the specified country, hence we pick it as the best ETS model 
+fitets <- ets(target,model="MMM")
+h <- length(test[,country])
+forecast_result <- forecast(fitets, h = h)
+
+#plot OLS diff model with ets 
+ts.plot(cz[,country],forecast_result$mean,col=c("black","red"))
+legend("topleft","ETS model",col= "red",lty=1)
+
+# Calculate the percentage error for the forecasted values
+actual_values <- test[, country]
+forecasted_values1 <- forecast_result$mean
+
+percentage_error1 <- mean(abs(actual_values - forecasted_values1) / actual_values) * 100
+
+# Print the percentage error
+cat("Percentage Error:", percentage_error1, "%\n")
+```
+The percentage error in the testing set it similar to the percentage error in the validation set (~2.7%) and the plot confirms the results we have from the metrics.
+
+We have a pretty good prediction let us now visit the PACF plot and see if we can achieve better results with a regression model.
+```{r}
+n <- length(target)
+X <- array(NA,c(n,5))
+for (i in 1:5){
+X[i:n,i] <- target[1:(n-i+1)]
+}
+# Name the columns
+colnames(X) <- c("y",paste0("lag",1:4))
+#omit NAs
+X <- na.omit(X)
+X <- as.data.frame(X)
+plot(X)
+```
+The plot does not look promising the only lag that seems to be fairly linear is lag 4, lets make a step regression and see.
+```{r}
+#Create Step model and plot it 
+fit <- lm(y~.,data=X)
+fitstep <- step(fit)
+summary(fitstep)
+
+plot(X$y,type="l")
+frcstep <- predict(fitstep,X)
+lines(frcstep,col="red")
+
+```
+As expected the step regression models solely lag 4, although the results do not seem discouraging we have to consider that this is the training set, we have to check the testing set to make sure the model works as intended.
+
+
+```{r}
+Xnew <- array(tail(target,4),c(1,4))
+colnames(Xnew) <- paste0("lag",4:1)
+
+Xnew <- as.data.frame(Xnew)
+predict(fitstep,Xnew)
+
+frc1 <- array(NA,c(4,1))
+
+Xnew <- tail(target,4)
+Xnew <- Xnew[4:1]
+Xnew <- c(Xnew, frc1)
+
+frc1 <- array(NA,c(4,1))
+for (i in 1:4){
+# For the Xnew we use the last five observations as before
+Xnew <- tail(target,4)
+# Add to that the forecasted values
+Xnew <- c(Xnew,frc1)
+# Take the relevant 5 values. The index i helps us to get the right ones
+Xnew <- Xnew[i:(3+i)]
+# Reverse the order
+Xnew <- Xnew[4:1]
+# Make Xnew an array and name the inputs
+Xnew <- array(Xnew, c(1,4)) # c(1,5) are the dimensions of the array
+colnames(Xnew) <- paste0("lag",1:4) # I have already reversed the order
+# Convert to data.frame
+Xnew <- as.data.frame(Xnew)
+# Forecast
+frc1[i] <- predict(fitstep,Xnew)
+}
+
+#Plot the predictions
+frc1 <- ts(frc1,frequency=frequency(test[,country]),start=start(test[,country]))
+ts.plot(cz[,country],frc1,col=c("black","blue"),main = "Stepwise Regression USA")
+
+
+forecasted_values2 <- frc1
+percentage_error2 <- mean(abs(actual_values - forecasted_values2) / actual_values) * 100
+
+# Print the percentage error
+cat("Percentage Error:", percentage_error2, "%\n")
+
+```
+The result is close to the ets model result. We might be able to outperform both of the above models. We now that out series is seasonal thus we could model the differences and maybe come up with a better model.
+
+```{r}
+X3 <- X
+for (i in 1:ncol(X3)){
+X3[,i] <- c(NA,diff(X3[,i]))
+}
+
+fitdiff <- step(lm(y~.,X3))
+summary(fitdiff)
+
+```
+
+```{r}
+frcdiff <- array(NA,c(4,1))
+for (i in 1:4){
+# Calculate the differences of the in-sample data
+y.diff <- diff(target)
+# Create lags - same as before
+Xnew <- tail(y.diff,4)
+Xnew <- c(Xnew,frcdiff)
+Xnew <- Xnew[i:(3+i)]
+Xnew <- Xnew[4:1]
+Xnew <- array(Xnew, c(1,4))
+colnames(Xnew) <- paste0("lag",1:4)
+Xnew <- as.data.frame(Xnew)
+# Forecast
+frcdiff[i] <- predict(fitdiff,Xnew)
+}
+# Transform to time series
+frcdiff <- ts(frcdiff,frequency=frequency(test[,country]),start=start(test[,country]))
+
+```
+
+```{r}
+frcdiff <- cumsum(c(tail(target,1),frcdiff))
+#dont need the first observation
+frcdiff <- frcdiff[-1]
+
+frcdiff <- ts(frcdiff,frequency=frequency(test[,country]),start=start(test[,country]))
+ts.plot(cz[,country],frcdiff,col=c("black","green"), main = "USA")
+legend("topleft","Difference Model",col="green",lty=1)
+
+forecasted_values3 <- frcdiff
+percentage_error3 <- mean(abs(actual_values - forecasted_values3) / actual_values) * 100
+
+# Print the percentage error
+cat("Percentage Error:", percentage_error3, "%\n")
+```
+With the difference model we get a slightly better result than the step model almost identical to the ETS(MMM) model.
+
+We will now perform Lasso and Ridge regression for comparison.
+```{r}
+xx <- as.matrix(X[,-1])
+yy <- as.matrix(X[,1])
+lasso <- cv.glmnet(x=xx,y=yy)
+coef(lasso) 
+ridge <- cv.glmnet(x=xx,y=yy,alpha=0)
+coef(ridge)
+
+```
+
+```{r}
+frclasso <- array(NA,c(4,1))
+for (i in 1:4){
+# Create inputs - note for lasso we do not transform these into data.frame
+Xnew <- c(tail(target,4),frclasso)
+Xnew <- (Xnew[i:(3+i)])[4:1]
+Xnew <- array(Xnew, c(1,4))
+colnames(Xnew) <- paste0("lag",1:4)
+# Forecast
+frclasso[i] <- predict(lasso,Xnew)
+}
+# Transform to time series
+frclasso <- ts(frclasso,frequency=frequency(test[,country]),start=start(test[,country]))
+ts.plot(cz[,country],frclasso,col=c("black","magenta"), main = "USA")
+legend("topleft","Lasso",col="magenta",lty=1)
+
+#Error
+forecasted_values4 <- frclasso
+percentage_error4 <- mean(abs(actual_values - forecasted_values4) / actual_values) * 100
+
+# Print the percentage error
+cat("Percentage Error:", percentage_error4, "%\n")
+
+```
+Lasso seems to outperform our previous models
+```{r}
+frcRidge <- array(NA,c(4,1))
+for (i in 1:4){
+# Create inputs - note for lasso we do not transform these into data.frame
+Xnew <- c(tail(target,4),frcRidge)
+Xnew <- (Xnew[i:(3+i)])[4:1]
+Xnew <- array(Xnew, c(1,4))
+colnames(Xnew) <- paste0("lag",1:4)
+# Forecast
+frcRidge[i] <- predict(ridge,Xnew)
+}
+# Transform to time series
+frcRidge <- ts(frcRidge,frequency=frequency(test[,country]),start=start(test[,country]))
+ts.plot(cz[,country],frcRidge,col=c("black","orange"), main = "USA")
+legend("topleft","Ridge",col="orange",lty=1)
+
+#Error
+forecasted_values5 <- frcRidge
+percentage_error5 <- mean(abs(actual_values - forecasted_values5) / actual_values) * 100
+
+# Print the percentage error
+cat("Percentage Error:", percentage_error5, "%\n")
+```
+Ridge has yet the worst performance overall. 
+lets try thief
+```{r}
+frcthief <- thief(target, h = 4 , usemodel = "arima")
+
+frcthief <- ts(frcthief$mean,frequency=frequency(test[,country]),start=start(test[,country]))
+ts.plot(cz[,country],frcthief,col=c("black","purple"), main = "USA")
+legend("topleft","thief",col="purple",lty=1)
+
+#Error
+forecasted_values6 <- frcthief
+percentage_error6 <- mean(abs(actual_values - forecasted_values6) / actual_values) * 100
+
+# Print the percentage error
+cat("Percentage Error:", percentage_error6, "%\n")
+
+```
+
+
+```{r}
+ts.plot(cz[,country],forecast_result$mean,frc1,frcdiff,frclasso,frcRidge,frcthief,
+       col=c("black","red","blue","green","magenta","orange","purple"))
+legend("topleft",c("ETS(MMM)","Step Regression","Regression with DIfferences","Lasso","Ridge","THieF"),col=c("red","blue","green","magenta","orange","purple"),lty=1)
+
+```
+
+```{r}
+ts.plot(test[,country],forecast_result$mean,frc1,frcdiff,frclasso,frcRidge,frcthief,
+       col=c("black","red","blue","green","magenta","orange","purple"))
+legend("bottom",c("ETS(MMM)","Step Regression","Regression with DIfferences","Lasso","Ridge","THieF"),col=c("red","blue","green","magenta","orange","purple"),lty=1,cex = 0.8)
+```
+
+
+```{r}
+cat("\n","ETS(MMM) MAPE:", percentage_error1, "%\n","Step Regression MAPE:", percentage_error2, "%\n","Regression with modeled differences MAPE:", percentage_error3, "%\n", "Lasso Regression MAPE:", percentage_error4, "%\n", "Ridge Regression MAPE:", percentage_error5, "%\n", "THieF Arima MAPE:", percentage_error6, "%\n")
+```
+
