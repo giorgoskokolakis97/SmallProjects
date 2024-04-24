@@ -21,16 +21,7 @@ Abstract—  In this paper, we present a system for classifying images of flower
            Overall, the proposed system is a valuable tool for automating the identification of flower species, which can have applications in fields such as conservation, agriculture, and research. 
            Additionally, the findings in this paper could be extend to other image classification tasks such as plant recognition in general.
 
-3. Cost Inefficient Cities in the USA
-Branch: cost-inefficient-cities-usa
-
-Introduction— Data visualization is a powerful tool for exploring and analysing complex in-formation, and it is especially useful when it comes to exploring trends in economic data. 
-              This paper will focus on the analysis of living costs in differ-ent states in the United States of America. 
-              Using the visualization tool Tab-leau, we will explore the variations in the cost of living in different cities and the factors that contribute to these variations. 
-              The results of this analysis will answer our research questions,
-              as well as provide valuable insights for individuals who are interested in understanding the cost of living in different cities and how these costs impact the standard of living for residents.
-
-4. Building a Short-term Forecasting Model to Predict the Call Volume of an Answering Service Company
+3. Building a Short-term Forecasting Model to Predict the Call Volume of an Answering Service Company
 Branch: call-volume-forecasting
 
 Abstract— This project focuses on time series forecasting for call volume prediction in a call answering company. 
@@ -48,7 +39,7 @@ Abstract— This project focuses on time series forecasting for call volume pred
           Future research could explore ensemble and hybrid models, incorporate additional features, and enhance interpretability for improved forecasting accuracy and decision-making. 
           The practical implications of these findings are substantial for call answering companies, enabling efficient resource allocation and enhanced operational efficiency in handling call volumes.
 
-5. Predicting Tourist Flow in Czechia
+4. Predicting Tourist Flow in Czechia
 Branch: tourist-flow-prediction-czechia
 
 Abstract— This project focuses on predicting tourist flows to Czechia from five key countries: Germany, Italy, the United Kingdom, Russia, and the United States.
